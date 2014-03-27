@@ -22,3 +22,6 @@
 [submodule "external/obfsclient"]
 	path = external/obfsclient
 	url = https://github.com/Yawning/obfsclient.git
+[submodule "external/Orchid"]
+	path = external/Orchid
+	url = https://github.com/subgraph/Orchid.git

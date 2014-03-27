@@ -329,16 +329,38 @@ jtorctl-clean:
 	-rm jtorctl-build-stamp
 
 #------------------------------------------------------------------------------#
+# Orchid library
+
+Orchid/bin/orchid.jar:
+	test -d Orchid/bin || mkdir Orchid/bin
+	cd Orchid/src && \
+		javac -source 1.6 -target 1.6 com/subgraph/orchid/TorClient.java -d ../bin
+	cd Orchid/bin && \
+		jar cvf orchid.jar *
+
+orchid-build-stamp: Orchid/bin/orchid.jar
+	touch orchid-build-stamp
+
+orchid: orchid-build-stamp
+	test -d bin || mkdir bin
+	cp Orchid/bin/orchid.jar bin
+
+orchid-clean:
+	-rm -rf Orchid/bin
+	-rm orchid-build-stamp
+
+#------------------------------------------------------------------------------#
 #create and clean assets: FYI - tor is stored as a ZIP file with an mp3 extension
 #in order to stop Android OS (older devices) from trying to compress/decompress it
 #this is related to a bug in compression of assets and resources > 1MB
 
-assets: tor privoxy jtorctl obfsproxy iptables
+assets: tor privoxy jtorctl orchid obfsproxy iptables
 	install -d ../libs/armeabi
 	install -d ../libs
 	install bin/privoxy ../libs/armeabi/libprivoxy.so
 	install bin/obfsproxy ../libs/armeabi/libobfsproxy.so
 	install bin/jtorctl.jar ../libs
+	install bin/orchid.jar ../libs
 	install bin/tor ../libs/armeabi/libtor.so
 	install bin/xtables ../libs/armeabi/libxtables.so
 
@@ -348,11 +370,12 @@ assets-clean:
 	-rm ../libs/armeabi/libprivoxy.so
 	-rm ../libs/armeabi/libobfsproxy.so
 	-rm ../libs/jtorctl.jar
+	-rm ../libs/orchid.jar
 
 #------------------------------------------------------------------------------#
 # cleanup, cleanup, put the toys away
 
-clean: openssl-clean libevent-clean tor-clean privoxy-clean jtorctl-clean assets-clean
+clean: openssl-clean libevent-clean tor-clean privoxy-clean jtorctl-clean orchid-clean assets-clean
 
 #------------------------------------------------------------------------------#
 # debugging stuff

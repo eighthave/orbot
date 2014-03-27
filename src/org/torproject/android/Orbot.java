@@ -13,6 +13,7 @@ import org.torproject.android.settings.SettingsPreferences;
 import org.torproject.android.wizard.ChooseLocaleWizardActivity;
 import org.torproject.android.wizard.TipsAndTricks;
 
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.NotificationManager;
 import android.content.ComponentName;
@@ -40,6 +41,9 @@ import android.util.Log;
 import android.view.GestureDetector;
 import android.view.GestureDetector.SimpleOnGestureListener;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.View.OnLongClickListener;
@@ -50,13 +54,8 @@ import android.widget.SlidingDrawer;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.actionbarsherlock.app.SherlockActivity;
-import com.actionbarsherlock.view.Menu;
-import com.actionbarsherlock.view.MenuInflater;
-import com.actionbarsherlock.view.MenuItem;
 
-
-public class Orbot extends SherlockActivity implements TorConstants, OnLongClickListener, OnTouchListener, OnSharedPreferenceChangeListener
+public class Orbot extends Activity implements TorConstants, OnLongClickListener, OnTouchListener, OnSharedPreferenceChangeListener
 {
 	/* Useful UI bits */
 	private TextView lblStatus = null; //the main text display widget
@@ -184,7 +183,7 @@ public class Orbot extends SherlockActivity implements TorConstants, OnLongClick
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         super.onCreateOptionsMenu(menu);
-        MenuInflater inflater = getSupportMenuInflater();
+        MenuInflater inflater = getMenuInflater();
         inflater.inflate(R.menu.main, menu);
        
         mItemOnOff = menu.getItem(0);

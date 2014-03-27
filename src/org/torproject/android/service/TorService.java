@@ -716,6 +716,7 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 		killTorProcess ();
 		
 		runTorShellCmd();
+		
 		runPrivoxyShellCmd();
 		
 		if (mHasRoot && mEnableTransparentProxy)
