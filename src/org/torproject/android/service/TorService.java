@@ -56,14 +56,7 @@ import android.widget.Toast;
 public class TorService extends Service implements TorServiceConstants, TorConstants, Runnable, EventHandler
 {
 	
-	public static boolean ENABLE_DEBUG_LOG = false;
-	
-	private static int currentStatus = STATUS_OFF;
-		
-	private TorControlConnection conn = null;
-	private Socket torConnSocket = null;
-	
-	private static TorService _torInstance;
+	public static boolean ENABLE_DEBUG_LOG = true;
 	
 	private static final int NOTIFY_ID = 1;
 	private static final int TRANSPROXY_NOTIFY_ID = 2;
@@ -72,24 +65,12 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 	
 	private boolean prefPersistNotifications = true;
 	
-	private static final int MAX_START_TRIES = 3;
-
     private ArrayList<String> configBuffer = null;
     private ArrayList<String> resetBuffer = null;
     
-   //   private String appHome;
-    private File appBinHome;
-    private File appCacheHome;
-    private File appLibsHome;
-    
-    private File fileTorOrig;
-    private File fileTorLink;
-    
-    private File filePrivoxy;
-    private File fileObfsProxy;
-    private File fileXtables;
-    
-    private File fileTorRc;
+    protected File appBinHome;
+    protected File appCacheHome;
+    protected File appLibsHome;
     
     private TorTransProxy mTransProxy;
 
@@ -110,6 +91,8 @@ public class TorService extends Service implements TorServiceConstants, TorConst
     private boolean mTransProxyAll = false;
     private boolean mTransProxyTethering = false;
 		
+    protected TorRuntime mTorRuntime = null;
+    
     public void logMessage(String msg)
     {
     	if (ENABLE_DEBUG_LOG)
@@ -118,6 +101,41 @@ public class TorService extends Service implements TorServiceConstants, TorConst
     		sendCallbackLogMessage(msg);	
 
     	}
+    }
+    
+    public File getAppBinaryHome ()
+    {
+    	return appBinHome;
+    }
+    
+    public void setAppBinaryHome (File newAppBinaryHome)
+    {
+    	appBinHome = newAppBinaryHome;
+    }
+    
+    public File getAppLibraryHome ()
+    {
+    	return appLibsHome;
+    }
+    
+    public void setAppLibraryHome (File newAppLibsHome)
+    {
+    	appLibsHome = newAppLibsHome;
+    }
+    
+    public File getAppCacheHome ()
+    {
+    	return appCacheHome;
+    }
+    
+    public void setAppCacheHome (File newAppCacheHome)
+    {
+    	appCacheHome = newAppCacheHome;
+    }
+    
+    public boolean hasRoot ()
+    {
+    	return mHasRoot;
     }
     
     public void logException(String msg, Exception e)
@@ -130,45 +148,7 @@ public class TorService extends Service implements TorServiceConstants, TorConst
     }
     
     
-    private boolean findExistingProc () 
-    {
-    //	android.os.Debug.waitForDebugger();
-    	
-    	if (fileTorLink != null)
-    	{
-	    	try
-	    	{
-		    	int procId = TorServiceUtils.findProcessId(fileTorLink.getAbsolutePath());
-		
-		 		if (procId != -1)
-		 		{
-		 			logNotice("Found existing Tor process");
-		 			
-		            sendCallbackLogMessage (getString(R.string.found_existing_tor_process));
-		
-		 				currentStatus = STATUS_CONNECTING;
-						
-		 				initControlConnection();
-						
-		 				processSettingsImpl();
-		 				
-						currentStatus = STATUS_ON;
-						
-						return true;
-		 			
-		 		}
-		 		
-		 		return false;
-	    	}
-	    	catch (Exception e)
-	    	{
-	    		Log.e(TAG,"error finding proc",e);
-	    		return false;
-	    	}
-    	}
-    	else
-    		return false;
-    }
+   
     
 
     /* (non-Javadoc)
@@ -198,8 +178,10 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 
 	public int getTorStatus ()
     {
-    	
-    	return currentStatus;
+    	if (mTorRuntime != null)
+    		return mTorRuntime.getStatus();
+    	else
+    		return STATUS_OFF;
     	
     }
 	
@@ -277,8 +259,7 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 	 */
 	public int onStartCommand(Intent intent, int flags, int startId) {
 	
-		_torInstance = this;
-		
+		android.os.Debug.waitForDebugger();
 		
 	   IntentFilter mNetworkStateFilter = new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION);
 	   registerReceiver(mNetworkStateReceiver , mNetworkStateFilter);
@@ -314,20 +295,24 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 		
 	}
 	
+	
+	public boolean isTorRunning ()
+	{
+		return false;
+	}
 	 
 	public void run ()
 	{
+		int currentStatus = getTorStatus();
 		
-		if (currentStatus == STATUS_CONNECTING)
+		if (currentStatus == STATUS_OFF)
 		{
-			boolean isRunning = _torInstance.findExistingProc ();
 			
-			if (!isRunning)
+			if (!isTorRunning())
 			{
 		     try
 		     {
 			   initTor();
-			   isRunning = true;
 		     }
 		     catch (Exception e)
 		     {				
@@ -336,13 +321,15 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 		    	 currentStatus = STATUS_OFF;
 		    	 this.showToolbarNotification(getString(R.string.unable_to_start_tor) + ": " + e.getMessage(), ERROR_NOTIFY_ID, R.drawable.ic_stat_notifyerr, -1, false);
 		    	 Log.d(TAG,"Unable to start Tor: " + e.getMessage(),e);
+		    	 
+		    	 
 		     }
 			}
 		}
-		else if (currentStatus == STATUS_OFF)
+		else if (currentStatus == STATUS_ON || currentStatus == STATUS_CONNECTING)
 		{
 
-			_torInstance.stopTor();
+			stopTor();
 
 		}
 	}
@@ -362,33 +349,36 @@ public class TorService extends Service implements TorServiceConstants, TorConst
     
     private void stopTor ()
     {
-    	currentStatus = STATUS_OFF;
     	
- 		boolean hasRoot =  getSharedPrefs(getApplicationContext()).getBoolean("has_root", false);
- 		
-    	try
-    	{	
-    		killTorProcess ();
-    		
-    		//stop the foreground priority and make sure to remove the persistant notification
-    		stopForeground(true);
-    		
-    		currentStatus = STATUS_OFF;
-    
-    		clearNotifications();
-
-    		if (hasRoot)
-    			disableTransparentProxy();
-    		
-    		sendCallbackStatusMessage(getString(R.string.status_disabled));
-
-    	}
-    	catch (Exception e)
+    	if (mTorRuntime != null)
     	{
-    		Log.d(TAG, "An error occured stopping Tor",e);
-    		logNotice("An error occured stopping Tor: " + e.getMessage());
-    		sendCallbackStatusMessage(getString(R.string.something_bad_happened));
-
+	 		boolean hasRoot =  getSharedPrefs(getApplicationContext()).getBoolean("has_root", false);
+	 		
+	    	try
+	    	{	
+	    		//killTorProcess ();
+	    		mTorRuntime.stop();
+	    		
+	    		//stop the foreground priority and make sure to remove the persistant notification
+	    		stopForeground(true);
+	    		
+	    	
+	    
+	    		clearNotifications();
+	
+	    		if (hasRoot)
+	    			disableTransparentProxy();
+	    		
+	    		sendCallbackStatusMessage(getString(R.string.status_disabled));
+	
+	    	}
+	    	catch (Exception e)
+	    	{
+	    		Log.d(TAG, "An error occured stopping Tor",e);
+	    		logNotice("An error occured stopping Tor: " + e.getMessage());
+	    		sendCallbackStatusMessage(getString(R.string.something_bad_happened));
+	
+	    	}
     	}
     }
     
@@ -432,177 +422,9 @@ public class TorService extends Service implements TorServiceConstants, TorConst
         return null;
 	}
 	
-	private void initTorPathLinkAndPerms () throws Exception
-	{
-		fileTorLink = new File(appBinHome,"tor");
-		fileTorLink.getParentFile().mkdirs();
-		
-		if (fileTorOrig.getAbsolutePath().startsWith("/mnt"))
-		{
-			logNotice("app installed on external storage - copying binaries to internal");
-			
-			//can't execute binaries off the external storage, so copy them internal
-			StringBuilder log = new StringBuilder();
-	    	int errCode = -1;
 
-	    	if (!fileTorLink.exists()||(fileTorOrig.length()!=fileTorLink.length()))
-	    	{
-	    		log = new StringBuilder();
-	    		String[] cmd = { SHELL_CMD_RM + ' ' + fileTorLink.getAbsolutePath() };
-	    		errCode = TorServiceUtils.doShellCommand(cmd,log, false, true);
-	    		logNotice("link CP err=" + errCode + " out: " + log.toString());
-	    		
-	    		log = new StringBuilder();
-	    		String[] cmd1 = { SHELL_CMD_CP + ' ' + fileTorOrig.getAbsolutePath() + ' ' + fileTorLink.getAbsolutePath() };
-	    		errCode = TorServiceUtils.doShellCommand(cmd1,log, false, true);
-	    		logNotice("link CP err=" + errCode + " out: " + log.toString());
-	    	}
-			enableBinExec(fileTorLink);
-						
-			File filePrivoxyLink = new File(appBinHome,"privoxy");
-			if (!filePrivoxyLink.exists()||(filePrivoxy.length()!=filePrivoxyLink.length()))
-			{
-				log = new StringBuilder();
-				String[] cmd = { SHELL_CMD_RM + ' ' + filePrivoxyLink.getAbsolutePath() };
-				errCode = TorServiceUtils.doShellCommand(cmd,log, false, true);
-				logNotice("link CP err=" + errCode + " out: " + log.toString());
-				
-				log = new StringBuilder();
-		    	String[] cmd1 = { SHELL_CMD_CP + ' ' + filePrivoxy.getAbsolutePath() + ' ' + filePrivoxyLink.getAbsolutePath() };
-				errCode = TorServiceUtils.doShellCommand(cmd1,log, false, true);
-				logNotice("link CP err=" + errCode + " out: " + log.toString());
-			}
-			filePrivoxy = filePrivoxyLink;			
-			enableBinExec(filePrivoxy);
-			
-			File fileObfsProxyLink = new File(appBinHome,"obfsproxy");
-			if (!fileObfsProxyLink.exists()||(fileObfsProxy.length()!=fileObfsProxyLink.length()))
-			{
-
-				log = new StringBuilder();
-				String[] cmd1 = { SHELL_CMD_RM + ' ' + fileObfsProxyLink.getAbsolutePath() };
-				errCode = TorServiceUtils.doShellCommand(cmd1,log, false, true);
-				logNotice("link CP err=" + errCode + " out: " + log.toString());
-				
-
-				log = new StringBuilder();
-		    	String[] cmd2 = { SHELL_CMD_CP + ' ' + fileObfsProxy.getAbsolutePath() + ' ' + fileObfsProxyLink.getAbsolutePath() };
-				errCode = TorServiceUtils.doShellCommand(cmd2,log, false, true);
-				logNotice("link CP err=" + errCode + " out: " + log.toString());
-			}
-			fileObfsProxy = fileObfsProxyLink;
-			enableBinExec(fileObfsProxy);
-			
-			
-			File fileXtablesLink = new File(appBinHome,"xtables");
-			if (!fileXtablesLink.exists()||(fileXtables.length()!=fileXtablesLink.length()))
-			{
-				log = new StringBuilder();
-				String[] cmd1 = { SHELL_CMD_RM + ' ' + fileXtablesLink.getAbsolutePath() };
-				errCode = TorServiceUtils.doShellCommand(cmd1,log, false, true);
-				logNotice("link CP err=" + errCode + " out: " + log.toString());
-				
-				log = new StringBuilder();
-		    	String[] cmd2 = { SHELL_CMD_CP + ' ' + fileXtables.getAbsolutePath() + ' ' + fileXtablesLink.getAbsolutePath() };
-				errCode = TorServiceUtils.doShellCommand(cmd2,log, false, true);
-				logNotice("link CP err=" + errCode + " out: " + log.toString());
-			}
-			fileXtables = fileXtablesLink;
-			enableBinExec(fileXtables);
-			
-		}
-		else
-		{
-		
-			StringBuilder log = new StringBuilder();
-	    	String[] cmdDel = { SHELL_CMD_RM + ' ' + fileTorLink.getAbsolutePath() };
-			int errCode = TorServiceUtils.doShellCommand(cmdDel,log, false, true);
-			logNotice("link RM err=" + errCode + " out: " + log.toString());
-	    	
-	    	log = new StringBuilder();
-	    	String[] cmd = { SHELL_CMD_LINK + ' ' + fileTorOrig.getAbsolutePath() + ' ' + fileTorLink.getAbsolutePath() };
-			errCode = TorServiceUtils.doShellCommand(cmd,log, false, true);
-			logNotice("link LN err=" + errCode + " out: " + log.toString());
-			
-			enableBinExec(fileTorOrig);
-			enableBinExec(fileTorLink);
-			enableBinExec(filePrivoxy);
-			enableBinExec(fileObfsProxy);
-			enableBinExec(fileXtables);
-			
-		}
-		
-	}
-    
-    private void killTorProcess () throws Exception
-    {
-    	StringBuilder log = new StringBuilder();
-    	int procId = -1;
-    	
-    	if (conn != null)
-		{
-    		logNotice("Using control port to shutdown Tor");
-    		
-    		
-			try {
-				logNotice("sending SHUTDOWN signal to Tor process");
-				conn.shutdownTor("SHUTDOWN");
-				
-				
-			} catch (Exception e) {
-				Log.d(TAG,"error shutting down Tor via connection",e);
-			}
-			
-			conn = null;
-		}
-    	
-    	int killDelayMs = 300;
-    	int maxTry = 5;
-    	int currTry = 0;
-    	
-		while ((procId = TorServiceUtils.findProcessId(fileTorLink.getAbsolutePath())) != -1 && currTry++ < maxTry)
-		{
-			sendCallbackStatusMessage ("Found existing orphan Tor process; Trying to shutdown now (device restart may be needed)...");
-			
-			logNotice("Found Tor PID=" + procId + " - attempt to shutdown now...");
-			
-			String[] cmd = { SHELL_CMD_KILL + ' ' + procId + "" };
-			TorServiceUtils.doShellCommand(cmd,log, mHasRoot, false);
-			try { Thread.sleep(killDelayMs); }
-			catch (Exception e){}
-		}
-		
-		if (procId == -1)
-		{
-			while ((procId = TorServiceUtils.findProcessId(filePrivoxy.getAbsolutePath())) != -1)
-			{
-				
-				logNotice("Found Privoxy PID=" + procId + " - killing now...");
-				String[] cmd = { SHELL_CMD_KILL + ' ' + procId + "" };
-	
-				TorServiceUtils.doShellCommand(cmd,log, mHasRoot, false);
-				try { Thread.sleep(killDelayMs); }
-				catch (Exception e){}
-			}
-			
-			while ((procId = TorServiceUtils.findProcessId(fileObfsProxy.getAbsolutePath())) != -1)
-			{
-				
-				logNotice("Found ObfsProxy PID=" + procId + " - killing now...");
-				String[] cmd = { SHELL_CMD_KILL + ' ' + procId + "" };
-	
-				TorServiceUtils.doShellCommand(cmd,log, mHasRoot, false);
-				try { Thread.sleep(killDelayMs); }
-				catch (Exception e){}
-			}
-		}
-		else
-		{
-			throw new Exception("*** Unable to kill existing Tor process. Please REBOOT your device. ***");
-		}
-    }
    
-    private void logNotice (String msg)
+    public void logNotice (String msg)
     {
     	if (msg != null && msg.trim().length() > 0)
     	{
@@ -613,77 +435,7 @@ public class TorService extends Service implements TorServiceConstants, TorConst
     	}
     }
     
-    private void initTorPaths () throws Exception
-    {
-    	appBinHome = getDir("bin",Application.MODE_PRIVATE);
-    	appCacheHome = getDir("data",Application.MODE_PRIVATE);
-    	appLibsHome = new File(getApplicationInfo().nativeLibraryDir);
-    	
-    	if (!appLibsHome.exists())
-    		appLibsHome = new File(getApplicationInfo().dataDir + "/lib");
-		
-    	fileTorOrig = new File(appLibsHome, TOR_BINARY_ASSET_KEY);
-    	
-    	if (fileTorOrig.exists())
-    	{
-    		logNotice ("Tor binary exists: " + fileTorOrig.getAbsolutePath());
-    	}
-    	else
-    	{
-    		appLibsHome = new File(getApplicationInfo().dataDir + "/lib");
-    		fileTorOrig = new File(appLibsHome, TOR_BINARY_ASSET_KEY);
-    		
-    		if (fileTorOrig.exists())
-    			logNotice ("Tor binary exists: " + fileTorOrig.getAbsolutePath());
-    		else
-    			throw new RuntimeException("Tor binary not installed");
-    	}
-    	
-		filePrivoxy = new File(appLibsHome, PRIVOXY_ASSET_KEY);
-		if (filePrivoxy.exists())
-    		logNotice ("Privoxy binary exists: " + filePrivoxy.getAbsolutePath());
-		else
-    		throw new RuntimeException("Privoxy binary not installed");
-    	
-		fileObfsProxy = new File(appLibsHome, OBFSPROXY_ASSET_KEY);
-		if (fileObfsProxy.exists())
-    		logNotice ("Obfsproxy binary exists: " + fileObfsProxy.getAbsolutePath());    	
-		else
-    		throw new RuntimeException("Obfsproxy binary not installed");
-    	
-		fileTorRc = new File(appBinHome, TORRC_ASSET_KEY);
-		
-		if (!fileTorRc.exists())
-		{
-			TorResourceInstaller installer = new TorResourceInstaller(this, appBinHome); 
-			boolean success = installer.installResources();
-				
-		}
-		
-		fileXtables = new File(appLibsHome, IPTABLES_BINARY_ASSET_KEY);
-		if (fileXtables.exists())
-			logNotice("Xtables binary exists: " + fileXtables.getAbsolutePath());
-		
-		initTorPathLinkAndPerms();
-		
-    }
-
-    private boolean enableBinExec (File fileBin) throws Exception
-    {
-    	
-    	logNotice(fileBin.getName() + ": PRE: Is binary exec? " + fileBin.canExecute());
-    	
-		StringBuilder log = new StringBuilder ();
-		
-		logNotice("(re)Setting permission on binary: " + fileBin.getAbsolutePath());
-		String[] cmd1 = {SHELL_CMD_CHMOD + ' ' + CHMOD_EXE_VALUE + ' ' + fileBin.getAbsolutePath()};
-		TorServiceUtils.doShellCommand(cmd1, log, false, true);
-	
-		logNotice(fileBin.getName() + ": POST: Is binary exec? " + fileBin.canExecute());
-	
-		return fileBin.canExecute();
-    }
-    
+  
     
     private void updateSettings ()
     {
@@ -703,21 +455,17 @@ public class TorService extends Service implements TorServiceConstants, TorConst
     public void initTor () throws Exception
     {
     	
-		initTorPaths();		
     	
     	updateSettings ();
-    	
-		currentStatus = STATUS_CONNECTING;
 
 		logNotice(getString(R.string.status_starting_up));
 		
 		sendCallbackStatusMessage(getString(R.string.status_starting_up));
 		
-		killTorProcess ();
+		mTorRuntime = new TorRuntimeOrchid();
+		mTorRuntime.initCallbacks(this);
 		
-		runTorShellCmd();
-		
-		runPrivoxyShellCmd();
+		mTorRuntime.start();
 		
 		if (mHasRoot && mEnableTransparentProxy)
 			enableTransparentProxy(mTransProxyAll, mTransProxyTethering);
@@ -732,7 +480,8 @@ public class TorService extends Service implements TorServiceConstants, TorConst
      */
     private boolean enableTransparentProxy (boolean proxyAll, boolean enableTether) throws Exception
  	{
-    	
+    	return false;
+    	/**
  		if (mTransProxy == null)
  		{
  			mTransProxy = new TorTransProxy(this);
@@ -781,6 +530,7 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 		}
 	
 		return true;
+		**/
  	}
     
     /*
@@ -805,134 +555,8 @@ public class TorService extends Service implements TorServiceConstants, TorConst
      	return true;
  	}
     
-    private void runTorShellCmd() throws Exception
-    {
-    	
-    	if (!fileTorLink.exists())
-    		throw new RuntimeException("Sorry Tor binary not installed properly: " + fileTorLink.getAbsolutePath());
-    	
-    	if (!fileTorLink.canExecute())
-    		throw new RuntimeException("Sorry can't execute Tor: " + fileTorLink.getAbsolutePath());
-    	
-		SharedPreferences prefs =getSharedPrefs(getApplicationContext());
-
-    	StringBuilder log = new StringBuilder();
-		
-		String torrcPath = new File(appBinHome, TORRC_ASSET_KEY).getAbsolutePath();
-		
-		boolean transProxyTethering = prefs.getBoolean("pref_transparent_tethering", false);
- 		
-		if (transProxyTethering)
-		{
-			torrcPath = new File(appBinHome, TORRC_TETHER_KEY).getAbsolutePath();
-		}
-		
-		String[] torCmd = {
-				"export HOME=" + appBinHome.getAbsolutePath(),
-				fileTorLink.getAbsolutePath() + " DataDirectory " + appCacheHome.getAbsolutePath() + " -f " + torrcPath  + " || exit\n"
-				};
-		
-		boolean runAsRootFalse = false;
-		boolean waitForProcess = false;
-		
-		int procId = -1;
-		int attempts = 0;
-
-		int torRetryWaitTimeMS = 2000;
-		
-		while (procId == -1 && attempts < MAX_START_TRIES)
-		{
-			log = new StringBuilder();
-			
-			sendCallbackStatusMessage(getString(R.string.status_starting_up));
-			
-			TorServiceUtils.doShellCommand(torCmd, log, runAsRootFalse, waitForProcess);
-		
-			Thread.sleep(torRetryWaitTimeMS);
-			
-			procId = TorServiceUtils.findProcessId(fileTorLink.getAbsolutePath());
-			
-			if (procId == -1)
-			{
-				Thread.sleep(torRetryWaitTimeMS);
-				procId = TorServiceUtils.findProcessId(fileTorOrig.getAbsolutePath());
-				attempts++;
-			}
-			else
-			{
-				logNotice("got tor proc id: " + procId);
-				
-			}
-		}
-		
-		if (procId == -1)
-		{
-
-			logNotice(log.toString());
-			sendCallbackStatusMessage(getString(R.string.couldn_t_start_tor_process_));
-			
-			throw new Exception ("Unable to start Tor");
-		}
-		else
-		{
-		
-			logNotice("Tor process id=" + procId);
-			
-			//showToolbarNotification(getString(R.string.status_starting_up), NOTIFY_ID, R.drawable.ic_stat_tor);
-			
-			initControlConnection ();
-
-			processSettingsImpl();
-	    }
-    }
     
-    private void runPrivoxyShellCmd () throws Exception
-    {
-    	
-    	logNotice( "Starting privoxy process");
-    	
-			int privoxyProcId = TorServiceUtils.findProcessId(filePrivoxy.getAbsolutePath());
-
-			StringBuilder log = null;
-			
-			int attempts = 0;
-			
-    		if (privoxyProcId == -1)
-    		{
-    			log = new StringBuilder();
-    			
-    			String privoxyConfigPath = new File(appBinHome, PRIVOXYCONFIG_ASSET_KEY).getAbsolutePath();
-    			
-    			String[] cmds = 
-    			{ filePrivoxy.getAbsolutePath() + " " + privoxyConfigPath + " &" };
-    			
-    			logNotice (cmds[0]); 
-    			
-    			boolean runAsRoot = false;
-    			boolean waitFor = false;
-    			
-    			TorServiceUtils.doShellCommand(cmds, log, runAsRoot, waitFor);
-    			
-    			//wait one second to make sure it has started up
-    			Thread.sleep(1000);
-    			
-    			while ((privoxyProcId = TorServiceUtils.findProcessId(filePrivoxy.getAbsolutePath())) == -1  && attempts < MAX_START_TRIES)
-    			{
-    				logNotice("Couldn't find Privoxy process... retrying...\n" + log);
-    				Thread.sleep(3000);
-    				attempts++;
-    			}
-    			
-    			logNotice(log.toString());
-    		}
-    		
-			sendCallbackLogMessage(getString(R.string.privoxy_is_running_on_port_) + PORT_HTTP);
-			
-    		logNotice("Privoxy process id=" + privoxyProcId);
-			
-    		
-    		
-    }
+   
     
     /*
 	public String generateHashPassword ()
@@ -945,55 +569,7 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 		return null;
 	}*/
 	
-	private void initControlConnection () throws Exception, RuntimeException
-	{
-			while (conn == null)
-			{
-				try
-				{
-					logNotice( "Connecting to control port: " + TOR_CONTROL_PORT);
-					
-					
-					torConnSocket = new Socket(IP_LOCALHOST, TOR_CONTROL_PORT);
-			        conn = TorControlConnection.getConnection(torConnSocket);
-			        
-			      //  conn.authenticate(new byte[0]); // See section 3.2
-
-					logNotice( "SUCCESS connected to control port");
-			        
-			        File fileCookie = new File(appCacheHome, TOR_CONTROL_COOKIE);
-			        
-			        if (fileCookie.exists())
-			        {
-				        byte[] cookie = new byte[(int)fileCookie.length()];
-				        new FileInputStream(fileCookie).read(cookie);
-				        conn.authenticate(cookie);
-				        		
-				        logNotice( "SUCCESS authenticated to control port");
-				        
-						sendCallbackStatusMessage(getString(R.string.tor_process_starting) + ' ' + getString(R.string.tor_process_complete));
 	
-				        addEventHandler();
-				        
-			        }
-			        
-			        break; //don't need to retry
-				}
-				catch (Exception ce)
-				{
-					conn = null;
-					Log.d(TAG,"Attempt: Error connecting to control port: " + ce.getLocalizedMessage(),ce);
-					
-					sendCallbackStatusMessage(getString(R.string.tor_process_waiting));
-
-					Thread.sleep(3000);
-										
-				}	
-			}
-		
-		
-
-	}
 	
 	
 	/*
@@ -1034,26 +610,6 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 	}*/
 	
 	
-	public void addEventHandler () throws IOException
-	{
-	       // We extend NullEventHandler so that we don't need to provide empty
-	       // implementations for all the events we don't care about.
-	       // ...
-		logNotice( "adding control port event handler");
-
-		conn.setEventHandler(this);
-	    
-		conn.setEvents(Arrays.asList(new String[]{
-	          "ORCONN", "CIRC", "NOTICE", "WARN", "ERR","BW"}));
-	      // conn.setEvents(Arrays.asList(new String[]{
-	        //  "DEBUG", "INFO", "NOTICE", "WARN", "ERR"}));
-
-		logNotice( "SUCCESS added control port event handler");
-	    
-	    
-
-	}
-	
 		/**
 		 * Returns the port number that the HTTP proxy is running on
 		 */
@@ -1077,27 +633,21 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 		}
 		
 		public void setTorProfile(int profile)  {
-		//	logNotice("Tor profile set to " + profile);
-			
+
 			if (profile == PROFILE_ON)
 			{
- 				currentStatus = STATUS_CONNECTING;
-	            sendCallbackStatusMessage (getString(R.string.status_starting_up));
-
-	            Thread thread = new Thread(this);
-	            thread.start();
-	           
+	            sendCallbackStatusMessage (getString(R.string.status_starting_up));	         
 			}
 			else if (profile == PROFILE_OFF)
 			{
-				currentStatus = STATUS_OFF;
-	            sendCallbackStatusMessage (getString(R.string.status_shutting_down));
-	          
-	            Thread thread = new Thread(this);
-	            thread.start();
-	            
-				
+	            sendCallbackStatusMessage (getString(R.string.status_shutting_down));				
 			}
+			
+	          
+            Thread thread = new Thread(this);
+            thread.start();
+            
+
 		}
 		
 		
@@ -1111,7 +661,7 @@ public class TorService extends Service implements TorServiceConstants, TorConst
           
           if (msg.indexOf(TOR_CONTROL_PORT_MSG_BOOTSTRAP_DONE)!=-1)
           {
-        	  currentStatus = STATUS_ON;
+        	  //currentStatus = STATUS_ON;
 
         	  showToolbarNotification(getString(R.string.status_activated), NOTIFY_ID, R.drawable.ic_stat_tor, -1, prefPersistNotifications);
           }
@@ -1295,26 +845,6 @@ public class TorService extends Service implements TorServiceConstants, TorConst
     public IBinder onBind(Intent intent) {
         
     	
-    	_torInstance = this;
-    	
-    	
-    	Thread thread = new Thread ()
-    	{
-    		
-    		public void run ()
-    		{
-		    	try
-		    	{
-		    		findExistingProc ();
-		    	}
-		    	catch (Exception e)
-		    	{
-		    		Log.e(TAG,"error onBind",e);
-		    	}
-    		}
-    	};
-    	thread.start();
-    	
     	return mBinder;
     	/**
     	if (ITorService.class.getName().equals(intent.getAction())) {
@@ -1347,7 +877,10 @@ public class TorService extends Service implements TorServiceConstants, TorConst
             if (cb != null) mCallbacks.unregister(cb);
         }
         public int getStatus () {
-        	return getTorStatus();
+        	if (mTorRuntime == null)
+        		return STATUS_OFF;
+        	else
+        		return mTorRuntime.getStatus();
         }
         
         public void setProfile (int profile)
@@ -1382,9 +915,9 @@ public class TorService extends Service implements TorServiceConstants, TorConst
     	public String getInfo (String key) {
     		try
     		{
-    			if(conn !=null)
+    			if(mTorRuntime !=null)
     			{
-    				String m = conn.getInfo(key);
+    				String m = mTorRuntime.getInfo(key);
 					return m;
 					
     			}
@@ -1401,11 +934,11 @@ public class TorService extends Service implements TorServiceConstants, TorConst
         {
         	try
         	{
-	        	if (conn != null)
+	        	if (mTorRuntime != null)
 	        	{
 	        		StringBuffer result = new StringBuffer();
 	        		
-	        		List<ConfigEntry> listCe = conn.getConf(name);
+	        		List<ConfigEntry> listCe = mTorRuntime.getConfiguration(name);
 	        		
 	        		Iterator<ConfigEntry> itCe = listCe.iterator();
 	        		ConfigEntry ce = null;
@@ -1459,13 +992,13 @@ public class TorService extends Service implements TorServiceConstants, TorConst
         public void newIdentity () 
         {
         	//it is possible to not have a connection yet, and someone might try to newnym
-        	if (conn != null)
+        	if (mTorRuntime != null)
         	{
 	        	new Thread ()
 	        	{
 	        		public void run ()
 	        		{
-	        			try { conn.signal("NEWNYM"); }
+	        			try { mTorRuntime.signal("NEWNYM"); }
 	        			catch (IOException ioe){
 	        				logMessage("error requesting newny: " + ioe.getLocalizedMessage());
 	        			}
@@ -1478,19 +1011,19 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 	    {
 	    	try
         	{
-	        	if (conn != null)
+	        	if (mTorRuntime != null)
 	        	{
 	        		
 	        		 if (resetBuffer != null && resetBuffer.size() > 0)
 				        {	
-				        	conn.resetConf(resetBuffer);
+	        			 	mTorRuntime.resetConf(resetBuffer);
 				        	resetBuffer = null;
 				        }
 	   	       
 	        		 if (configBuffer != null && configBuffer.size() > 0)
 				        {
 	        			 	
-				        	conn.setConf(configBuffer);
+	        			 	mTorRuntime.setConfiguration(configBuffer);
 				        	configBuffer = null;
 				        }
 	   	       
@@ -1517,7 +1050,7 @@ public class TorService extends Service implements TorServiceConstants, TorConst
     private boolean inCallbackStatus = false;
     private boolean inCallback = false;
     
-    private synchronized void sendCallbackStatusMessage (String newStatus)
+    public synchronized void sendCallbackStatusMessage (String newStatus)
     {
     	 
     	if (mCallbacks == null)
@@ -1635,6 +1168,11 @@ public class TorService extends Service implements TorServiceConstants, TorConst
     		mConnectivity = !intent.getBooleanExtra(ConnectivityManager.EXTRA_NO_CONNECTIVITY, false);
 
     		boolean disableNetwork = prefs.getBoolean(TorConstants.PREF_DISABLE_NETWORK, true);
+    		
+    		int currentStatus = STATUS_OFF;
+    		
+    		if (mTorRuntime != null)
+    			currentStatus = mTorRuntime.getStatus();
     		
     		if (currentStatus == STATUS_ON && disableNetwork)
     		{
@@ -1786,7 +1324,8 @@ public class TorService extends Service implements TorServiceConstants, TorConst
 
 			if (obfsBridges)
 			{
-				mBinder.updateConfiguration("ClientTransportPlugin","obfs2 exec " + fileObfsProxy.getAbsolutePath() + " --managed", false);
+				//TODO fix obfsproxy support
+		//		mBinder.updateConfiguration("ClientTransportPlugin","obfs2 exec " + fileObfsProxy.getAbsolutePath() + " --managed", false);
 			}
 
 			mBinder.updateConfiguration("UpdateBridgesFromAuthority", "0", false);
