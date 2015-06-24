@@ -591,6 +591,13 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
     public void onCreate() {
         super.onCreate();
 
+        // Before doing anything else, see if the tor daemon is already running.
+        // If the tor daemon is not running, TorService.onCreate() is the very
+        // first step in the startup procedure, so announce STATUS_STARTING here
+        if (!findExistingTorDaemon()) {
+            sendStatusStarting();
+        }
+
         try
         {
             mNumberFormat = NumberFormat.getInstance(Locale.getDefault()); //localized numbers!
@@ -606,25 +613,7 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
             }
             
             torUpgradeAndConfig();
-        
-            new Thread(new Runnable ()
-            {
-                public void run ()
-                {
-                    try
-                    {
-                        findExistingTorDaemon();
-                    }
-                    catch (Exception e)
-                    {
-                        Log.e(TAG,"error onBind",e);
-                        logNotice("error finding exiting process: " + e.toString());
-                    }
-                    
-                }
-            }).start();
-        
-            
+
             if (OrbotVpnService.mSocksProxyPort == -1)
             	OrbotVpnService.mSocksProxyPort = (int)((Math.random()*1000)+10000); 
             		
@@ -754,25 +743,26 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
      * The entire process for starting tor and related services is run from this method.
      */
     private void startTor() {
-        // STATUS_STARTING is set in onCreate()
+        // STATUS_STARTING is set in onCreate() if tor daemon wasn't running then
         if (mCurrentStatus == STATUS_STOPPING) {
-            // these states should probably be handled better
+            // TODO STATUS_STOPPING probably could be handled better
             sendCallbackLogMessage("Ignoring start request, currently " + mCurrentStatus);
             return;
         } else if (mCurrentStatus == STATUS_ON && findExistingTorDaemon()) {
-        
+            // all is good if both STATUS_ON and the tor daemon is running
             sendCallbackLogMessage("Ignoring start request, already started.");
-            
             return;
-        }        
-        
+        }
+
+        // if tor daemon died between onCreate() and here, then STATUS_STARTING
+        // will not have been announced yet
+        if (mCurrentStatus != STATUS_STARTING) {
+            sendStatusStarting();
+        }
+
         // make sure there are no stray daemons running
         killAllDaemons();
 
-        sendCallbackStatus(STATUS_STARTING);
-        sendCallbackLogMessage(getString(R.string.status_starting_up));
-        logNotice(getString(R.string.status_starting_up));
-        
         try {
         if (!isTorUpgradeAndConfigComplete)
             torUpgradeAndConfig();
@@ -1886,6 +1876,12 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
         sendBroadcastOnlyToOrbot(intent);
         // send for any apps that are interested
         sendBroadcast(intent);
+    }
+
+    private void sendStatusStarting() {
+        sendCallbackStatus(STATUS_STARTING);
+        sendCallbackLogMessage(getString(R.string.status_starting_up));
+        logNotice(getString(R.string.status_starting_up));
     }
 
     /**
