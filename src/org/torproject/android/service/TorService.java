@@ -84,8 +84,8 @@ import java.util.concurrent.TimeoutException;
 
 public class TorService extends Service implements TorServiceConstants, OrbotConstants, EventHandler
 {
-    
-    private String mCurrentStatus = STATUS_OFF;
+
+    private static String mCurrentStatus = STATUS_OFF;
     
     private final static int CONTROL_SOCKET_TIMEOUT = 0;
         
@@ -131,6 +131,19 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
     private ExecutorService mExecutor = Executors.newFixedThreadPool(1);
 
     private NumberFormat mNumberFormat = null;
+
+    /**
+     * For checking the running status right now. The valid status Strings are
+     * {@link TorServiceConstants#STATUS_OFF},
+     * {@link TorServiceConstants#STATUS_STARTING},
+     * {@link TorServiceConstants#STATUS_ON}, and
+     * {@link TorServiceConstants#STATUS_STOPPING}. Changes in status are also
+     * broadcast via {@link TorServiceConstants#ACTION_STATUS} so things can
+     * respond to the change without polling this variable.
+     */
+    public static String getStatus() {
+        return mCurrentStatus;
+    }
 
     public void debug(String msg)
     {
@@ -1852,7 +1865,6 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
 	      intent.putExtra("down",download);
 	      intent.putExtra("written",written);
 	      intent.putExtra("read",read);
-	      intent.putExtra(EXTRA_STATUS, mCurrentStatus);
 
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
     }
@@ -1863,15 +1875,13 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
         Intent intent = new Intent(LOCAL_ACTION_LOG);
           // You can also include some extra data.
           intent.putExtra(LOCAL_EXTRA_LOG, logMessage);
-	      intent.putExtra(EXTRA_STATUS, mCurrentStatus);
-
           LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
 
     }
     
     private void sendCallbackStatus(String currentStatus) {
         mCurrentStatus = currentStatus;
-        Intent intent = getActionStatusIntent(currentStatus);
+        Intent intent = getActionStatusIntent();
         // send for Orbot internals, using secure local broadcast
         sendBroadcastOnlyToOrbot(intent);
         // send for any apps that are interested
@@ -1893,9 +1903,9 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
         return LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
     }
 
-    private Intent getActionStatusIntent(String currentStatus) {
+    public static Intent getActionStatusIntent() {
         Intent intent = new Intent(ACTION_STATUS);
-        intent.putExtra(EXTRA_STATUS, currentStatus);
+        intent.putExtra(EXTRA_STATUS, mCurrentStatus);
         return intent;
     }
 

@@ -5,8 +5,6 @@ package org.torproject.android;
 
 import android.annotation.TargetApi;
 import android.app.Activity;
-import android.app.ActivityManager;
-import android.app.ActivityManager.RunningServiceInfo;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.BroadcastReceiver;
@@ -30,6 +28,7 @@ import android.support.v4.content.LocalBroadcastManager;
 import android.support.v4.widget.DrawerLayout;
 import android.support.v7.app.ActionBarDrawerToggle;
 import android.support.v7.widget.Toolbar;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.GestureDetector;
 import android.view.GestureDetector.SimpleOnGestureListener;
@@ -42,7 +41,6 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.View.OnLongClickListener;
 import android.view.View.OnTouchListener;
-import android.view.Window;
 import android.view.animation.AccelerateInterpolator;
 import android.widget.Button;
 import android.widget.TextView;
@@ -60,7 +58,6 @@ import org.torproject.android.ui.ImageProgressView;
 import org.torproject.android.ui.PromoAppsActivity;
 import org.torproject.android.ui.Rotate3dAnimation;
 
-import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
@@ -86,10 +83,6 @@ public class OrbotMainActivity extends Activity
 	private DrawerLayout mDrawer;
 	private ActionBarDrawerToggle mDrawerToggle;
 	private Toolbar mToolbar;
-		
-    /* Some tracking bits */
-    private String torStatus = null; //latest status reported from the tor service
-    private Intent lastStatusIntent;  // the last ACTION_STATUS Intent received
 
     private SharedPreferences mPrefs = null;
 
@@ -99,8 +92,9 @@ public class OrbotMainActivity extends Activity
     private final static int REQUEST_SETTINGS = 0x9874;
 
     // message types for mStatusUpdateHandler
-    private final static int STATUS_UPDATE = 1;
+    private final static int REFRESH_UI = 1;
     private static final int MESSAGE_TRAFFIC_COUNT = 2;
+    private final static int LOG_MESSAGE = 3;
 
 	public final static String INTENT_ACTION_REQUEST_HIDDEN_SERVICE = "org.torproject.android.REQUEST_HS_PORT";
 	public final static String INTENT_ACTION_REQUEST_START_TOR = "org.torproject.android.START_TOR";	
@@ -155,9 +149,8 @@ public class OrbotMainActivity extends Activity
                 return;
 
             if (action.equals(TorServiceConstants.LOCAL_ACTION_LOG)) {
-                Message msg = mStatusUpdateHandler.obtainMessage(STATUS_UPDATE);
+                Message msg = mStatusUpdateHandler.obtainMessage(LOG_MESSAGE);
                 msg.obj = intent.getStringExtra(TorServiceConstants.LOCAL_EXTRA_LOG);
-                msg.getData().putString("status", intent.getStringExtra(TorServiceConstants.EXTRA_STATUS));
                 mStatusUpdateHandler.sendMessage(msg);
 
             } else if (action.equals(TorServiceConstants.LOCAL_ACTION_BANDWIDTH)) {
@@ -171,16 +164,12 @@ public class OrbotMainActivity extends Activity
                 msg.getData().putLong("upload", upload);
                 msg.getData().putLong("readTotal", read);
                 msg.getData().putLong("writeTotal", written);
-                msg.getData().putString("status", intent.getStringExtra(TorServiceConstants.EXTRA_STATUS));
 
                 mStatusUpdateHandler.sendMessage(msg);
 
             } else if (action.equals(TorServiceConstants.ACTION_STATUS)) {
-                lastStatusIntent = intent;
-                
-                Message msg = mStatusUpdateHandler.obtainMessage(STATUS_UPDATE);
-                msg.getData().putString("status", intent.getStringExtra(TorServiceConstants.EXTRA_STATUS));
-
+                // ping the UI to update based on new status in TorService.mCurrentStatus
+                Message msg = mStatusUpdateHandler.obtainMessage(REFRESH_UI);
                 mStatusUpdateHandler.sendMessage(msg);
             }
         }
@@ -509,18 +498,13 @@ public class OrbotMainActivity extends Activity
 	
 	}
 	
-	private synchronized void handleIntents ()
-	{
-		if (getIntent() == null)
-			return;
-		
-	    // Get intent, action and MIME type
-	    Intent intent = getIntent();
-	    String action = intent.getAction();
-	    Log.d(TAG, "handleIntents " + action);
 
-	    //String type = intent.getType();
-		
+	private void handleIntents() {
+	    Intent intent = getIntent();
+	    if (intent == null)
+	        return;
+
+	    String action = intent.getAction();
 		if (action == null)
 			return;
 		
@@ -572,14 +556,7 @@ public class OrbotMainActivity extends Activity
 
             if (Prefs.allowBackgroundStarts())
             {            
-	            Intent resultIntent;
-	            if (lastStatusIntent == null) {
-	                resultIntent = new Intent(intent);
-	            } else {
-	                resultIntent = lastStatusIntent;
-	            }
-	            resultIntent.putExtra(TorServiceConstants.EXTRA_STATUS, torStatus);
-	            setResult(RESULT_OK, resultIntent);
+	            setResult(RESULT_OK, TorService.getActionStatusIntent());
 	            finish();
             }
           
@@ -745,7 +722,7 @@ public class OrbotMainActivity extends Activity
                     }
                 
             }
-            else if (torStatus == TorServiceConstants.STATUS_ON)
+            else if (TorService.getStatus() == TorServiceConstants.STATUS_ON)
             {
                 updateTransProxy();
                 Toast.makeText(this, R.string.you_may_need_to_stop_and_start_orbot_for_settings_change_to_be_enabled_, Toast.LENGTH_SHORT).show();
@@ -926,7 +903,7 @@ public class OrbotMainActivity extends Activity
     {
 		Prefs.putBridgesEnabled(enable);
 
-		if (torStatus == TorServiceConstants.STATUS_ON)
+		if (TorService.getStatus() == TorServiceConstants.STATUS_ON)
 		{
 			String bridgeList = Prefs.getBridgesList();
 			if (bridgeList != null && bridgeList.length() > 0)
@@ -1015,10 +992,9 @@ public class OrbotMainActivity extends Activity
 			mBtnBridges.setChecked(Prefs.bridgesEnabled());
         }
 
-		requestTorStatus();
+        updateStatus(null);
 
-		updateStatus(null);
-		
+        handleIntents();
     }
 
     AlertDialog aDialog = null;
@@ -1062,24 +1038,12 @@ public class OrbotMainActivity extends Activity
      * {@code torServiceMsg} must never be {@code null}
      */
     private void updateStatus(String torServiceMsg) {
+        String torServiceStatus = TorService.getStatus();
+        if (torServiceStatus == TorServiceConstants.STATUS_ON) {
 
-    	if (torStatus == null)
-    		return; //UI not init'd yet
-    	
-        if (torStatus == TorServiceConstants.STATUS_ON) {
-        	
             imgStatus.setImageResource(R.drawable.toron);
-
             mBtnBrowser.setEnabled(true);
-
-            if (torServiceMsg != null)
-            {
-            	if (torServiceMsg.contains(TorServiceConstants.LOG_NOTICE_HEADER))
-            		lblStatus.setText(torServiceMsg);
-            }
-        	else
-        		lblStatus.setText(getString(R.string.status_activated));
-
+            lblStatus.setText(R.string.status_activated);
 
             boolean showFirstTime = mPrefs.getBoolean("connect_first_time", true);
 
@@ -1095,39 +1059,40 @@ public class OrbotMainActivity extends Activity
             if (autoStartFromIntent)
             {
                 autoStartFromIntent = false;
-                Intent resultIntent = lastStatusIntent;	            
-	            resultIntent.putExtra(TorServiceConstants.EXTRA_STATUS, torStatus);
-	            setResult(RESULT_OK, resultIntent);
+	            setResult(RESULT_OK, TorService.getActionStatusIntent());
                 finish();
                 Log.d(TAG, "autoStartFromIntent finish");
             }
-            
-            
 
-        } else if (torStatus == TorServiceConstants.STATUS_STARTING) {
+        } else if (torServiceStatus == TorServiceConstants.STATUS_STARTING) {
 
             imgStatus.setImageResource(R.drawable.torstarting);
 
-            if (torServiceMsg != null)
-            {
-            	if (torServiceMsg.contains(TorServiceConstants.LOG_NOTICE_BOOTSTRAPPED))
-            		lblStatus.setText(torServiceMsg);            	            
-            }
-            else
-            	lblStatus.setText(getString(R.string.status_starting_up));
             
+            if (TextUtils.isEmpty(torServiceMsg)) {
+                lblStatus.setText(R.string.status_starting_up);
+
+            } else if (torServiceMsg.indexOf('%') != -1) {
+                // show Tor daemon's percentage complete messages
+                lblStatus.setText(torServiceMsg);
+
+            } else if (torServiceMsg.contains("tart")) { // Start and start
+                lblStatus.setText(torServiceMsg);
+
+            } else if (torServiceMsg.contains("onnect")) { // Connect and connect
+                lblStatus.setText(torServiceMsg);
+
+            }
+
             mBtnBrowser.setEnabled(false);
 
-        } else if (torStatus == TorServiceConstants.STATUS_STOPPING) {
+        } else if (torServiceStatus == TorServiceConstants.STATUS_STOPPING) {
 
-        	  if (torServiceMsg != null && torServiceMsg.contains(TorServiceConstants.LOG_NOTICE_HEADER))
-              	lblStatus.setText(torServiceMsg);	
-        	  
             imgStatus.setImageResource(R.drawable.torstarting);
             lblStatus.setText(torServiceMsg);
             mBtnBrowser.setEnabled(false);
 
-        } else if (torStatus == TorServiceConstants.STATUS_OFF) {
+        } else if (torServiceStatus == TorServiceConstants.STATUS_OFF) {
 
             imgStatus.setImageResource(R.drawable.toroff);
             lblStatus.setText(getString(R.string.press_to_start));
@@ -1148,29 +1113,10 @@ public class OrbotMainActivity extends Activity
     private void startTor() {
         sendIntentToService(TorServiceConstants.ACTION_START);
     }
-    
-    /**
-     * Request tor status without starting it
-     * {@link TorServiceConstants#ACTION_START} {@link Intent} to
-     * {@link TorService}
-     */
-    private void requestTorStatus() {
-        sendIntentToService(TorServiceConstants.ACTION_STATUS);
-    }
-
-    private boolean isTorServiceRunning() {
-        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
-        for (RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
-            if (TorService.class.getName().equals(service.service.getClassName())) {
-                return true;
-            }
-        }
-        return false;
-    }
 
     public boolean onLongClick(View view) {
 
-        if (torStatus == TorServiceConstants.STATUS_OFF) {
+        if (TorService.getStatus() == TorServiceConstants.STATUS_OFF) {
             lblStatus.setText(getString(R.string.status_starting_up));
             startTor();
         } else {
@@ -1183,36 +1129,25 @@ public class OrbotMainActivity extends Activity
                 
     }
 
-// this is what takes messages or values from the callback threads or other non-mainUI threads
-//and passes them back into the main UI thread for display to the user
+    /**
+     * Takes messages or values from the callback threads or other
+     * non-mainUI threads and passes them back into the main UI thread for
+     * display to the user.
+     */
     private Handler mStatusUpdateHandler = new Handler() {
 
         @Override
         public void handleMessage(final Message msg) {
-        	
-        	String newTorStatus = msg.getData().getString("status");
-        	String log = (String)msg.obj;
-        	
-        	if (torStatus == null && newTorStatus != null) //first time status
-        	{
-        		torStatus = newTorStatus;
-        		findViewById(R.id.pbConnecting).setVisibility(View.GONE);
-        		findViewById(R.id.frameMain).setVisibility(View.VISIBLE);
-        		updateStatus(log);
-        		
-        		//now you can handle the intents properly
-        		handleIntents();
-        		
-        	}
-        	else if (newTorStatus != null && !torStatus.equals(newTorStatus)) //status changed
-        	{
-        		torStatus = newTorStatus;
-        		updateStatus(log);
-        	}        	
-        	else if (log != null) //it is just a log
-        		updateStatus(log);
-        	
+
             switch (msg.what) {
+                case LOG_MESSAGE:
+
+                    updateStatus((String)msg.obj);
+                    break;
+                case REFRESH_UI:
+
+                    updateStatus(null); // this is just a ping to refresh UI
+                    break;
                 case MESSAGE_TRAFFIC_COUNT:
 
                     Bundle data = msg.getData();
@@ -1303,7 +1238,7 @@ public class OrbotMainActivity extends Activity
             @Override
             public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
                 try {                    
-                    if (torStatus == TorServiceConstants.STATUS_ON)
+                    if (TorService.getStatus() == TorServiceConstants.STATUS_ON)
                     {
                         float direction = 1f;
                         if (velocityX < 0)
