@@ -86,7 +86,7 @@ public class OrbotMainActivity extends Activity
 
     private SharedPreferences mPrefs = null;
 
-    private boolean autoStartFromIntent = false;
+    private boolean orbotMainActivityReceivedStartTorIntent = false;
     
     private final static int REQUEST_VPN = 8888;
     private final static int REQUEST_SETTINGS = 0x9874;
@@ -507,7 +507,9 @@ public class OrbotMainActivity extends Activity
 	    String action = intent.getAction();
 		if (action == null)
 			return;
-		
+
+        orbotMainActivityReceivedStartTorIntent = false;
+
 		if (action.equals(INTENT_ACTION_REQUEST_HIDDEN_SERVICE))
 		{
         	final int hiddenServicePortRequest = getIntent().getIntExtra("hs_port", -1);
@@ -550,16 +552,17 @@ public class OrbotMainActivity extends Activity
 		}
 		else if (action.equals(INTENT_ACTION_REQUEST_START_TOR))
 		{
-			autoStartFromIntent = true;
+			orbotMainActivityReceivedStartTorIntent = true;
           
-            startTor();
-
+            // START_TOR Intents cannot transparently start in the background
+            // because OrbotMainActivity is the receiver of START_TOR Intents
+            // and apps that send it using startActivityForResult() expect to
+            // receive the result reply only after Orbot has started. Instead,
+            // Orbot will show itself, but will automatically start up if this
+            // preference is enabled.
             if (Prefs.allowBackgroundStarts())
-            {            
-	            setResult(RESULT_OK, TorService.getActionStatusIntent());
-	            finish();
-            }
-          
+                startTor();
+
 		}
 		else if (action.equals(Intent.ACTION_VIEW))
 		{
@@ -1056,12 +1059,10 @@ public class OrbotMainActivity extends Activity
                         getString(R.string.connect_first_time), true);
             }
 
-            if (autoStartFromIntent)
+            if (orbotMainActivityReceivedStartTorIntent)
             {
-                autoStartFromIntent = false;
 	            setResult(RESULT_OK, TorService.getActionStatusIntent());
                 finish();
-                Log.d(TAG, "autoStartFromIntent finish");
             }
 
         } else if (torServiceStatus == TorServiceConstants.STATUS_STARTING) {
