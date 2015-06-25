@@ -342,6 +342,12 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
         public void run() {
             String action = mIntent.getAction();
 
+            // before doing anything else, make sure the daemons are installed
+            torUpgradeAndConfig();
+
+            if (OrbotVpnService.mSocksProxyPort == -1)
+                OrbotVpnService.mSocksProxyPort = (int)((Math.random()*1000)+10000);
+
             if (action != null) {
                 if (action.equals(ACTION_START)) {
                     replyWithStatus(mIntent);
@@ -616,6 +622,9 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
     public void onCreate() {
         super.onCreate();
 
+        mNumberFormat = NumberFormat.getInstance(Locale.getDefault()); // localized numbers!
+        mNotificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+
         // Before doing anything else, see if the tor daemon is already running.
         // If the tor daemon is not running, TorService.onCreate() is the very
         // first step in the startup procedure, so announce STATUS_STARTING here
@@ -623,20 +632,6 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
             sendStatusStarting();
         }
 
-            mNumberFormat = NumberFormat.getInstance(Locale.getDefault()); //localized numbers!
-
-            if (mNotificationManager == null)
-            {
-         
-                mNotificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-             
-            }
-            
-            torUpgradeAndConfig();
-
-            if (OrbotVpnService.mSocksProxyPort == -1)
-            	OrbotVpnService.mSocksProxyPort = (int)((Math.random()*1000)+10000); 
-            		
     }
 
     private void torUpgradeAndConfig() {
