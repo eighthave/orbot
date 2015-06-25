@@ -31,6 +31,7 @@ public class OrbotApp extends Application implements OrbotConstants
     public static File fileMeekclient;
     public static File fileXtables;
     public static File fileTorRc;
+    public static File fileControlPort;
 
     @Override
     public void onCreate() {
@@ -48,6 +49,7 @@ public class OrbotApp extends Application implements OrbotConstants
         fileMeekclient = new File(appBinHome, TorServiceConstants.MEEK_ASSET_KEY);
         fileXtables = new File(appBinHome, TorServiceConstants.IPTABLES_ASSET_KEY);
         fileTorRc = new File(appBinHome, TorServiceConstants.TORRC_ASSET_KEY);
+        fileControlPort = new File(OrbotApp.appBinHome, "control.txt");
     }
 
     @Override

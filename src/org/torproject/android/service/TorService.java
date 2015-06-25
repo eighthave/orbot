@@ -109,8 +109,6 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
 
     private boolean isTorUpgradeAndConfigComplete = false;
 
-    private File fileControlPort;
-    
     private TorTransProxy mTransProxy;
 
     private long mTotalTrafficWritten = 0;
@@ -675,8 +673,7 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
         StringBuffer extraLines = new StringBuffer();
         
         String TORRC_CONTROLPORT_FILE_KEY = "ControlPortWriteToFile";
-        fileControlPort = new File(OrbotApp.appBinHome, "control.txt");
-        extraLines.append(TORRC_CONTROLPORT_FILE_KEY).append(' ').append(fileControlPort.getCanonicalPath()).append('\n');
+        extraLines.append(TORRC_CONTROLPORT_FILE_KEY).append(' ').append(OrbotApp.fileControlPort.getCanonicalPath()).append('\n');
 
          if (Prefs.transparentTethering())
          {
@@ -1248,10 +1245,10 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
         
         try
         {
-            if (fileControlPort.exists())
+            if (OrbotApp.fileControlPort.exists())
             {
-                debug("Reading control port config file: " + fileControlPort.getCanonicalPath());
-                BufferedReader bufferedReader = new BufferedReader(new FileReader(fileControlPort));
+                debug("Reading control port config file: " + OrbotApp.fileControlPort.getCanonicalPath());
+                BufferedReader bufferedReader = new BufferedReader(new FileReader(OrbotApp.fileControlPort));
                 String line = bufferedReader.readLine();
                 
                 if (line != null)
@@ -1270,7 +1267,8 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
             }
             else
             {
-                debug("Control Port config file does not yet exist (waiting for tor): " + fileControlPort.getCanonicalPath());
+                debug("Control Port config file does not yet exist (waiting for tor): "
+                        + OrbotApp.fileControlPort.getCanonicalPath());
                 
             }
             
