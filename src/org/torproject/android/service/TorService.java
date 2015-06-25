@@ -623,8 +623,6 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
             sendStatusStarting();
         }
 
-        try
-        {
             mNumberFormat = NumberFormat.getInstance(Locale.getDefault()); //localized numbers!
 
             if (mNotificationManager == null)
@@ -639,18 +637,9 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
             if (OrbotVpnService.mSocksProxyPort == -1)
             	OrbotVpnService.mSocksProxyPort = (int)((Math.random()*1000)+10000); 
             		
-        }
-        catch (Exception e)
-        {
-            //what error here
-            Log.e(TAG, "Error installing Orbot binaries",e);
-            logNotice("There was an error installing Orbot binaries");
-        }
-        
-        Log.i("TorService", "onCreate end");
     }
 
-    private void torUpgradeAndConfig() throws IOException, TimeoutException {
+    private void torUpgradeAndConfig() {
         if (isTorUpgradeAndConfigComplete)
             return;
 
@@ -660,18 +649,26 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
         logNotice("checking binary version: " + version);
         
         TorResourceInstaller installer = new TorResourceInstaller(this, OrbotApp.appBinHome);
-        
-        if (version == null || (!version.equals(BINARY_TOR_VERSION)) || (!OrbotApp.fileTor.exists()))
-        {
-            logNotice("upgrading binaries to latest version: " + BINARY_TOR_VERSION);
-            
-            boolean success = installer.installResources();
-            
-            if (success)
-                prefs.edit().putString(PREF_BINARY_TOR_VERSION_INSTALLED,BINARY_TOR_VERSION).commit();    
-        }
 
-        updateTorConfigFile ();
+        try {
+            if (version == null
+                    || (!version.equals(BINARY_TOR_VERSION))
+                    || (!OrbotApp.fileTor.exists())) {
+
+                logNotice("upgrading binaries to latest version: " + BINARY_TOR_VERSION);
+
+                boolean success = installer.installResources();
+
+                if (success)
+                    prefs.edit().putString(PREF_BINARY_TOR_VERSION_INSTALLED, BINARY_TOR_VERSION)
+                            .commit();
+            }
+
+            updateTorConfigFile();
+        } catch (Exception e) {
+            Log.e(TAG, "Error installing Orbot binaries", e);
+            logNotice("There was an error installing Orbot binaries");
+        }
         isTorUpgradeAndConfigComplete = true;
     }
 
