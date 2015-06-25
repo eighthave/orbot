@@ -92,7 +92,6 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
     private TorControlConnection conn = null;
     private Socket torConnSocket = null;
     private int mLastProcessId = -1;
-    
 
     private int mPortHTTP = HTTP_PROXY_PORT_DEFAULT;
     private int mPortSOCKS = SOCKS_PROXY_PORT_DEFAULT;
@@ -126,7 +125,8 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
 
 	boolean mIsLollipop = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
 
-    private ExecutorService mExecutor = Executors.newFixedThreadPool(1);
+	final static ExecutorService mIncomingIntentExecutor = Executors.newSingleThreadExecutor();
+	private ExecutorService mExternalIPExecutor = Executors.newFixedThreadPool(1);
 
     private NumberFormat mNumberFormat = null;
 
@@ -304,20 +304,29 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
         
         mNotificationShowing = true;
      }
-    
 
-    /* (non-Javadoc)
-     * @see android.app.Service#onStart(android.content.Intent, int)
+    /**
+     * Now that any app can send {@link TorServiceConstants#ACTION_START}
+     * {@link Intent}s directly to {@link TorService}, and there are other
+     * requests that can come in as well, the start/stop procedure needs to be
+     * protected by a queue, e.g. using
+     * {@link Executors#newSingleThreadExecutor()}. If {@link TorService}
+     * received a bunch of start commands in a short amount of time, they would
+     * wreak havoc if they all ran concurrently.
      */
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null)
-            new Thread (new IncomingIntentRouter(intent)).start();
+            mIncomingIntentExecutor.submit(new IncomingIntentRouter(intent));
         else
             Log.d(TAG, "Got null onStartCommand() intent");
 
         return Service.START_STICKY;
     }
-    
+
+    /**
+     * IncomingIntentRouter handles running the actions related to incoming
+     * {@link Intent}s.  It is the meat of the whole start-up process as well.
+     */
     private class IncomingIntentRouter implements Runnable
     {
         Intent mIntent;
@@ -327,6 +336,9 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
             mIntent = intent;
         }
         
+        /**
+         * This is the meat of the whole start up process.
+         */
         public void run() {
             String action = mIntent.getAction();
 
@@ -1528,7 +1540,7 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
                 if(status.equals("BUILT")){
                     
                     if (node.ipAddress == null)
-                        mExecutor.execute(new ExternalIPFetcher(node));
+                        mExternalIPExecutor.execute(new ExternalIPFetcher(node));
                     
                     hmBuiltNodes.put(node.id, node);
                 }
