@@ -369,7 +369,6 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
     @Override
     public void onDestroy() {
         stopTor();
-        unregisterReceiver(mNetworkStateReceiver);
         super.onDestroy();
     }
 
@@ -378,6 +377,9 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
         try {
             sendCallbackStatus(STATUS_STOPPING);
             sendCallbackLogMessage(getString(R.string.status_shutting_down));
+
+            // ignore changes in network connectivity while shutting down
+            unregisterReceiver(mNetworkStateReceiver);
 
             killAllDaemons();
 
@@ -615,9 +617,6 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
 
             if (mNotificationManager == null)
             {
-               
-               IntentFilter mNetworkStateFilter = new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION);               
-                registerReceiver(mNetworkStateReceiver , mNetworkStateFilter);
          
                 mNotificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
              
@@ -790,6 +789,11 @@ public class TorService extends Service implements TorServiceConstants, OrbotCon
         
         if (success)
         {
+            // now that tor is running, receive updates about the network connectivity.
+            // if these are received to early, it could break the start up
+            registerReceiver(mNetworkStateReceiver,
+                    new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+
             if (mPortHTTP != -1)
                 runPolipoShellCmd(shellUser);
             
